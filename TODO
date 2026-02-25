@@ -1,0 +1,47 @@
+PHASE 0 — DHCP Discovery
+========================
+[x] DHCP hook (dhcp_hook2.sh) — OUI filter, FSM dispatch
+[x] FSM library (lib/bmc-fsm.sh) — NetBox helpers, state transitions
+[x] offline → discovered: assign BMC IP, update device state
+[x] discovered → discovered: refresh BMC IP
+[x] active: compare DHCP IP vs NetBox record, journal mismatch
+[x] active: assign IP if none on record
+[x] State machine diagram (docs/dhcp-hook2-flow.dot)
+
+
+PHASE 1 — PXE Validation
+=========================
+[ ] Finalize PXE boot image (kernel + initrd + validation scripts)
+[ ] 01-init.sh — hardware inventory via dmidecode, device lookup by serial/MAC
+[ ] 02-memory.sh — memtester pass/fail, journal result to NetBox
+[ ] 03-disk.sh — fio benchmarks per disk, journal results to NetBox
+[ ] 04-lldp.sh — LLDP neighbour discovery, map NICs → switch ports in NetBox
+[ ] 05-report.sh — aggregate pass/fail, POST callback, transition device → staged
+[ ] FSM transition: discovered → staged (pxe_complete trigger)
+[ ] NetBox custom field updates (CPU model, RAM, disk inventory from 01-init)
+[ ] LLDP: update interface/port assignments in NetBox (04-lldp)
+[ ] Callback API endpoint to receive server_live event from 05-report
+[ ] PXE server config — TFTP + HTTP, per-MAC boot entries
+[ ] Test in QEMU (macOS: no LLDP; Linux: full L2 via TAP bridge)
+[ ] State machine diagram (docs/phase1-flow.dot)
+
+
+PHASE 2 — Hardening
+====================
+[ ] Define trigger (auto on staged vs manual approval)
+[ ] Ansible inventory — dynamic from NetBox staged devices
+[ ] BMC hardening playbook (iLO / iDRAC)
+[ ] Firmware update playbook
+[ ] BIOS/UEFI profile playbook
+[ ] Transition device → ready on playbook success
+[ ] Rollback / retry strategy on failure
+[ ] State machine diagram
+
+
+INFRASTRUCTURE
+==============
+[ ] DHCP server config — hook integration + BMC subnet
+[ ] PXE server deployment
+[ ] NetBox custom fields for validation results
+[ ] Callback API service
+[ ] Secrets management (NETBOX_TOKEN, etc.)

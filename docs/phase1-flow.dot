@@ -1,0 +1,112 @@
+/**
+ * Phase 1 — PXE Validation Flow
+ *
+ * Trigger: manual — onsite tech powers on the server.
+ * The server PXE boots automatically and runs validation scripts.
+ * On overall pass the device transitions from discovered → staged.
+ *
+ * Render:
+ *   dot -Tsvg phase1-flow.dot -o phase1-flow.svg
+ *   dot -Tpng phase1-flow.dot -o phase1-flow.png
+ */
+
+digraph phase1 {
+
+    rankdir  = TB
+    graph [
+        fontname      = "Helvetica,Arial,sans-serif"
+        fontsize      = 12
+        nodesep       = 0.5
+        ranksep       = 0.6
+        bgcolor       = "white"
+        label         = "Phase 1 — PXE Validation\ndiscovered → staged"
+        labelloc      = t
+        labelfontsize = 15
+    ]
+    node [
+        fontname  = "Helvetica,Arial,sans-serif"
+        fontsize  = 10
+        style     = "filled,rounded"
+        shape     = box
+        fillcolor = "#f0f4f8"
+        color     = "#446688"
+        margin    = "0.22,0.12"
+    ]
+    edge [
+        fontname  = "Helvetica,Arial,sans-serif"
+        fontsize  = 9
+        color     = "#555555"
+        arrowsize = 0.8
+    ]
+
+    /* ── trigger ───────────────────────────────────────────────────── */
+    trigger [ label="Manual trigger\nOnsite tech powers on server",
+              shape=oval, fillcolor="#cce5ff", color="#2255aa" ]
+
+    /* ── phase 0 fires first ───────────────────────────────────────── */
+    phase0  [ label="Phase 0 — DHCP hook fires\nBMC IP recorded · device = discovered",
+              fillcolor="#e8eaf6", color="#3949ab" ]
+
+    /* ── PXE boot ──────────────────────────────────────────────────── */
+    pxe     [ label="Server PXE boots\nDHCP → TFTP kernel + initrd\nHTTP rootfs",
+              fillcolor="#f3e5f5", color="#6a1b9a" ]
+
+    /* ── main.sh ───────────────────────────────────────────────────── */
+    main    [ label="main.sh starts (systemd)\nParse kernel cmdline\nNETBOX_URL · NETBOX_TOKEN · CALLBACK_URL",
+              fillcolor="#fce4ec", color="#880e4f" ]
+
+    /* ── validation phases ─────────────────────────────────────────── */
+    p01     [ label="01 — Boot Init\nHardware inventory (dmidecode)\nFind device in NetBox by serial / MAC\nJournal hardware info",
+              fillcolor="#e3f2fd", color="#1565c0" ]
+
+    p01_chk [ label="Device found\nin NetBox?",
+              shape=diamond, fillcolor="#fff3cd", color="#856404" ]
+
+    p02     [ label="02 — Memory Test\nmemtester — all available RAM\nJournal pass / fail + bandwidth",
+              fillcolor="#e3f2fd", color="#1565c0" ]
+
+    p03     [ label="03 — Disk I/O\nfio per block device\nSeq + rand · read + write\nJournal throughput / IOPS",
+              fillcolor="#e3f2fd", color="#1565c0" ]
+
+    p04     [ label="04 — LLDP Discovery\nlldpad on all NICs · wait 60 s\nMap NIC → switch port\nJournal neighbour table",
+              fillcolor="#e3f2fd", color="#1565c0" ]
+
+    p05     [ label="05 — Final Report\nAggregate all results\nPOST server_live event to callback API",
+              fillcolor="#e3f2fd", color="#1565c0" ]
+
+    /* ── pass / fail decision ──────────────────────────────────────── */
+    result  [ label="All tests\npassed?",
+              shape=diamond, fillcolor="#fff3cd", color="#856404" ]
+
+    /* ── outcomes ──────────────────────────────────────────────────── */
+    staged  [ label="PATCH device → staged\nJournal: validation complete",
+              fillcolor="#d4edda", color="#28a745" ]
+
+    failed  [ label="Journal error — test failed\nDevice remains discovered\nAwaits manual review",
+              fillcolor="#fff9c4", color="#856404" ]
+
+    nodev   [ label="Journal error — device not found\nHalt",
+              fillcolor="#f8d7da", color="#721c24" ]
+
+    /* ── terminals ─────────────────────────────────────────────────── */
+    done    [ label="Done", shape=oval, fillcolor="#d4edda", color="#28a745" ]
+    halt    [ label="Halt", shape=oval, fillcolor="#f8d7da", color="#dc3545" ]
+
+    /* ── edges ─────────────────────────────────────────────────────── */
+    trigger -> phase0
+    phase0  -> pxe
+    pxe     -> main
+    main    -> p01
+    p01     -> p01_chk
+    p01_chk -> nodev [ label="no"  color="#dc3545" fontcolor="#dc3545" ]
+    p01_chk -> p02   [ label="yes" ]
+    nodev   -> halt
+    p02     -> p03
+    p03     -> p04
+    p04     -> p05
+    p05     -> result
+    result  -> staged [ label="yes" color="#28a745" fontcolor="#28a745" ]
+    result  -> failed [ label="no"  color="#856404" fontcolor="#856404" ]
+    staged  -> done
+    failed  -> done
+}
