@@ -1,0 +1,109 @@
+/**
+ * bm-dhcp-tap.py — DHCP ACK sniffer flow
+ *
+ * Runs as a systemd service on the MAAS rack controller host OS (outside the
+ * MAAS snap). Binds a raw AF_PACKET socket on ens3 and parses every Ethernet
+ * frame looking for DHCP ACK packets, then fires dhcp_hook2.sh.
+ *
+ * Render:
+ *   dot -Tsvg bm-dhcp-tap-flow.dot -o bm-dhcp-tap-flow.svg
+ *   dot -Tpng bm-dhcp-tap-flow.dot -o bm-dhcp-tap-flow.png
+ */
+
+digraph bm_dhcp_tap {
+
+    rankdir  = TB
+    graph [
+        fontname      = "Helvetica,Arial,sans-serif"
+        fontsize      = 12
+        nodesep       = 0.5
+        ranksep       = 0.55
+        bgcolor       = "white"
+        label         = "bm-dhcp-tap.py — DHCP ACK Sniffer"
+        labelloc      = t
+        labelfontsize = 15
+    ]
+    node [
+        fontname  = "Helvetica,Arial,sans-serif"
+        fontsize  = 10
+        style     = "filled,rounded"
+        shape     = box
+        fillcolor = "#f0f4f8"
+        color     = "#446688"
+        margin    = "0.22,0.12"
+    ]
+    edge [
+        fontname  = "Helvetica,Arial,sans-serif"
+        fontsize  = 9
+        color     = "#555555"
+        arrowsize = 0.8
+    ]
+
+    /* ── systemd context ────────────────────────────────────────────── */
+    svc    [ label="systemd: bm-dhcp-tap.service\nLoads /opt/bm-dhcp-tap/bm-hook.env\nBinds AF_PACKET raw socket on ens3",
+             shape=oval, fillcolor="#cce5ff", color="#2255aa" ]
+
+    recv   [ label="recvfrom()\nReceive raw Ethernet frame" ]
+
+    /* ── layer 2 / 3 / 4 checks ────────────────────────────────────── */
+    chk_eth  [ label="EtherType = 0x0800\n(IPv4)?",
+               shape=diamond, fillcolor="#fff3cd", color="#856404" ]
+
+    chk_ip   [ label="IP proto = 17\n(UDP)?",
+               shape=diamond, fillcolor="#fff3cd", color="#856404" ]
+
+    chk_port [ label="src port 67\ndst port 68?",
+               shape=diamond, fillcolor="#fff3cd", color="#856404" ]
+
+    /* ── BOOTP / DHCP checks ────────────────────────────────────────── */
+    chk_op   [ label="BOOTP op = 2\n(BOOTREPLY)?",
+               shape=diamond, fillcolor="#ffe0b2", color="#e65100" ]
+
+    chk_magic [ label="DHCP magic cookie\n0x63825363?",
+                shape=diamond, fillcolor="#ffe0b2", color="#e65100" ]
+
+    chk_type [ label="Option 53 = 5\n(DHCP ACK)?",
+               shape=diamond, fillcolor="#ffe0b2", color="#e65100" ]
+
+    /* ── extraction ─────────────────────────────────────────────────── */
+    extract  [ label="Extract fields\nyiaddr  → IP address\nchaddr  → client MAC (6 bytes)\noption 12 → hostname (or 'unknown')",
+               fillcolor="#e3f2fd", color="#1565c0" ]
+
+    /* ── dispatch ───────────────────────────────────────────────────── */
+    spawn    [ label="subprocess.Popen()\n/opt/bm-dhcp-tap/dhcp_hook2.sh\nIP  MAC  HOSTNAME",
+               fillcolor="#d4edda", color="#28a745" ]
+
+    /* ── terminals ──────────────────────────────────────────────────── */
+    discard  [ label="Discard frame\n(next recvfrom)",
+               shape=oval, fillcolor="#eeeeee", color="#888888" ]
+
+    loop     [ label="← next frame",
+               shape=oval, fillcolor="#f0f4f8", color="#446688" ]
+
+    /* ── edges ──────────────────────────────────────────────────────── */
+    svc      -> recv
+
+    recv     -> chk_eth
+    chk_eth  -> discard   [ label="no"  color="#888888" fontcolor="#888888" ]
+    chk_eth  -> chk_ip    [ label="yes" ]
+
+    chk_ip   -> discard   [ label="no"  color="#888888" fontcolor="#888888" ]
+    chk_ip   -> chk_port  [ label="yes" ]
+
+    chk_port -> discard   [ label="no"  color="#888888" fontcolor="#888888" ]
+    chk_port -> chk_op    [ label="yes" ]
+
+    chk_op   -> discard   [ label="no"  color="#888888" fontcolor="#888888" ]
+    chk_op   -> chk_magic [ label="yes" ]
+
+    chk_magic -> discard  [ label="no"  color="#888888" fontcolor="#888888" ]
+    chk_magic -> chk_type [ label="yes" ]
+
+    chk_type -> discard   [ label="no"  color="#888888" fontcolor="#888888" ]
+    chk_type -> extract   [ label="yes" ]
+
+    extract  -> spawn
+    spawn    -> loop
+    discard  -> loop
+    loop     -> recv
+}

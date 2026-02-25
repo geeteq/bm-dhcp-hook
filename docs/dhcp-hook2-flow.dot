@@ -36,7 +36,7 @@ digraph dhcp_hook2 {
     ]
 
     /* ── entry ─────────────────────────────────────────────────────── */
-    start  [ label="DHCP lease commit\nIP · MAC · hostname",
+    start  [ label="bm-dhcp-tap.py fires hook\nDHCP ACK captured on ens3\nIP · MAC · hostname",
              shape=oval, fillcolor="#cce5ff", color="#2255aa" ]
 
     filter [ label="BMC OUI match?",

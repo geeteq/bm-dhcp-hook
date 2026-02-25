@@ -7,6 +7,10 @@ PHASE 0 — DHCP Discovery
 [x] active: compare DHCP IP vs NetBox record, journal mismatch
 [x] active: assign IP if none on record
 [x] State machine diagram (docs/dhcp-hook2-flow.dot)
+[x] DHCP tap (tools/bm-dhcp-tap.py) — raw AF_PACKET socket, outside MAAS snap
+[x] Systemd service (tools/bm-dhcp-tap.service) — ens3, /opt/bm-dhcp-tap
+[x] DHCP tap flow diagram (docs/bm-dhcp-tap-flow.dot)
+[x] Bulk MAC loader (tools/netbox_load_bmc_mac.sh) — serial+MAC CSV → NetBox
 
 
 PHASE 1 — PXE Validation
@@ -40,7 +44,7 @@ PHASE 2 — Hardening
 
 INFRASTRUCTURE
 ==============
-[ ] DHCP server config — hook integration + BMC subnet
+[x] DHCP hook integration — bm-dhcp-tap.py on MAAS rack controller host (outside snap)
 [ ] PXE server deployment
 [ ] NetBox custom fields for validation results
 [ ] Callback API service
