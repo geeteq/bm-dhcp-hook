@@ -29,6 +29,9 @@ NETBOX_URL="${NETBOX_URL:-http://localhost:8000}"
 NETBOX_TOKEN="${NETBOX_TOKEN:-0123456789abcdef0123456789abcdef01234567}"
 BMC_SUBNET_PREFIX="${BMC_SUBNET_PREFIX:-24}"
 LOG_FILE="${LOG_FILE:-/opt/bm-dhcp-tap/log/bmc.log}"
+# Optional HTTP/HTTPS proxy for NetBox API calls (e.g. http://proxy.corp:3128)
+# Set in /opt/bm-dhcp-tap/bm-hook.env when NetBox is only reachable via proxy.
+HTTPS_PROXY="${HTTPS_PROXY:-}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
@@ -91,6 +94,7 @@ nb_curl() {
         -o "$tmp"
         -w '%{http_code}'
     )
+    [[ -n "${HTTPS_PROXY:-}" ]] && curl_args+=(--proxy "$HTTPS_PROXY")
     [[ -n "$body" ]] && curl_args+=(--data-raw "$body")
 
     local http_code
@@ -124,6 +128,7 @@ nb_curl_raw() {
         -o "$tmp"
         -w '%{http_code}'
     )
+    [[ -n "${HTTPS_PROXY:-}" ]] && curl_args+=(--proxy "$HTTPS_PROXY")
     [[ -n "$body" ]] && curl_args+=(--data-raw "$body")
 
     local http_code
