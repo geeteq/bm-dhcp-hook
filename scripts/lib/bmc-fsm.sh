@@ -28,7 +28,7 @@ _BMC_FSM_SH=1
 NETBOX_URL="${NETBOX_URL:-http://localhost:8000}"
 NETBOX_TOKEN="${NETBOX_TOKEN:-0123456789abcdef0123456789abcdef01234567}"
 BMC_SUBNET_PREFIX="${BMC_SUBNET_PREFIX:-24}"
-LOG_FILE="${LOG_FILE:-/var/log/bm/bmc.log}"
+LOG_FILE="${LOG_FILE:-/opt/bm-dhcp-tap/log/bmc.log}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 

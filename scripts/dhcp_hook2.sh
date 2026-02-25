@@ -11,7 +11,7 @@
 #       set ClientIP   = binary-to-ascii(10, 8, ".", leased-address);
 #       set ClientMac  = binary-to-ascii(16, 8, ":", substring(hardware, 1, 6));
 #       set ClientHost = pick-first-value(option host-name, "unknown");
-#       execute("/usr/local/bin/dhcp_hook2.sh", ClientIP, ClientMac, ClientHost);
+#       execute("/opt/bm-dhcp-tap/dhcp_hook2.sh", ClientIP, ClientMac, ClientHost);
 #   }
 #
 # Arguments (or environment variable fallbacks):
@@ -20,14 +20,14 @@
 #   $3 / CLIENT_HOSTNAME Client hostname (optional)
 #
 # Environment variables: see lib/bmc-fsm.sh
-#   LOG_FILE defaults to /var/log/bm/dhcp-hook.log
+#   LOG_FILE defaults to /opt/bm-dhcp-tap/log/dhcp-hook.log
 # =============================================================================
 
 # Do not use set -e — dhcpd must not see a non-zero exit from this hook
 set -uo pipefail
 
 # Script-specific log file — set before sourcing the lib
-LOG_FILE="${LOG_FILE:-/var/log/bm/dhcp-hook.log}"
+LOG_FILE="${LOG_FILE:-/opt/bm-dhcp-tap/log/dhcp-hook.log}"
 
 # Load shared FSM library (NetBox helpers, OUI filter, state machine)
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

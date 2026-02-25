@@ -1,0 +1,33 @@
+[Unit]
+Description=BM DHCP tap — fires dhcp_hook2.sh on BMC DHCP ACK leases
+Documentation=https://github.com/your-org/bm-provisioning
+# Start after the network interface is up
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/bm-dhcp-tap/bm-dhcp-tap.py ens3
+
+# Load NetBox credentials and other env vars
+EnvironmentFile=/opt/bm-dhcp-tap/bm-hook.env
+
+# Give the process raw socket access without running as root
+# If you prefer to run as root, replace the three lines below with User=root
+User=root
+# Alternatively, create a dedicated user and grant CAP_NET_RAW:
+# User=bm-hook
+# AmbientCapabilities=CAP_NET_RAW
+# CapabilityBoundingSet=CAP_NET_RAW
+
+# Restart on any failure; wait 10 s between attempts
+Restart=on-failure
+RestartSec=10
+
+# Log goes to journald as well as /opt/bm-dhcp-tap/log/dhcp-tap.log
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bm-dhcp-tap
+
+[Install]
+WantedBy=multi-user.target
