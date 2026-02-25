@@ -1,0 +1,96 @@
+/**
+ * dhcp_hook2.sh — BMC DHCP Hook State Machine
+ *
+ * Render:
+ *   dot -Tsvg dhcp-hook2-flow.dot -o dhcp-hook2-flow.svg
+ *   dot -Tpng dhcp-hook2-flow.dot -o dhcp-hook2-flow.png
+ */
+
+digraph dhcp_hook2 {
+
+    rankdir  = TB
+    graph [
+        fontname      = "Helvetica,Arial,sans-serif"
+        fontsize      = 12
+        nodesep       = 0.5
+        ranksep       = 0.6
+        bgcolor       = "white"
+        label         = "dhcp_hook2.sh — BMC DHCP Hook"
+        labelloc      = t
+        labelfontsize = 15
+    ]
+    node [
+        fontname  = "Helvetica,Arial,sans-serif"
+        fontsize  = 10
+        style     = "filled,rounded"
+        shape     = box
+        fillcolor = "#f0f4f8"
+        color     = "#446688"
+        margin    = "0.2,0.12"
+    ]
+    edge [
+        fontname  = "Helvetica,Arial,sans-serif"
+        fontsize  = 9
+        color     = "#555555"
+        arrowsize = 0.8
+    ]
+
+    /* ── entry ─────────────────────────────────────────────────────── */
+    start  [ label="DHCP lease commit\nIP · MAC · hostname",
+             shape=oval, fillcolor="#cce5ff", color="#2255aa" ]
+
+    filter [ label="BMC OUI match?",
+             shape=diamond, fillcolor="#fff3cd", color="#856404" ]
+
+    lookup [ label="Device found in NetBox\nby MAC address?",
+             shape=diamond, fillcolor="#fff3cd", color="#856404" ]
+
+    /* ── state decision ────────────────────────────────────────────── */
+    state  [ label="Device state?",
+             shape=diamond, fillcolor="#ffe0b2", color="#e65100" ]
+
+    /* ── outcomes ──────────────────────────────────────────────────── */
+    act_offline    [ label="offline\n──────────────────\nPromote → discovered\nAssign BMC IP",
+                     fillcolor="#e3f2fd", color="#1565c0" ]
+
+    act_discovered [ label="discovered\n──────────────────\nRefresh BMC IP",
+                     fillcolor="#e0f7fa", color="#00695c" ]
+
+    act_active_none [ label="active · no IP on record\n──────────────────\nAssign BMC IP\nJournal: IP assigned",
+                      fillcolor="#e8f5e9", color="#2e7d32" ]
+
+    act_active_ok   [ label="active · IP matches\n──────────────────\nNo action",
+                      fillcolor="#d4edda", color="#28a745" ]
+
+    act_active_mismatch [ label="active · IP mismatch\n──────────────────\nJournal warning\nNo change to NetBox",
+                          fillcolor="#fff9c4", color="#856404" ]
+
+    act_nomatch    [ label="No FSM transition\nfor this state\n──────────────────\nJournal warning",
+                     fillcolor="#fff9c4", color="#856404" ]
+
+    /* ── terminals ─────────────────────────────────────────────────── */
+    ignore [ label="Ignore\n(exit 0)", shape=oval, fillcolor="#eeeeee", color="#888888" ]
+    done   [ label="Done\n(exit 0)",  shape=oval, fillcolor="#d4edda", color="#28a745" ]
+
+    /* ── edges ─────────────────────────────────────────────────────── */
+    start -> filter
+    filter -> ignore  [ label="no" color="#888888" fontcolor="#888888" ]
+    filter -> lookup  [ label="yes" ]
+
+    lookup -> ignore  [ label="not found" color="#888888" fontcolor="#888888" ]
+    lookup -> state   [ label="found" ]
+
+    state -> act_offline         [ label="offline"    ]
+    state -> act_discovered      [ label="discovered" ]
+    state -> act_active_none     [ label="active\n(no IP on record)" ]
+    state -> act_active_ok       [ label="active\n(IP matches)"      ]
+    state -> act_active_mismatch [ label="active\n(IP mismatch)"     ]
+    state -> act_nomatch         [ label="other state" color="#888888" fontcolor="#888888" ]
+
+    act_offline          -> done
+    act_discovered       -> done
+    act_active_none      -> done
+    act_active_ok        -> done
+    act_active_mismatch  -> done
+    act_nomatch          -> done
+}
