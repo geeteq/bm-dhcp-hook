@@ -1,16 +1,18 @@
 [Unit]
 Description=BM DHCP tap — fires dhcp_hook2.sh on BMC DHCP ACK leases
-Documentation=https://github.com/your-org/bm-provisioning
-# Start after the network interface is up
+Documentation=https://github.com/geeteq/bm-dhcp-hook
+# Wait for the management interface to be online
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/bm-dhcp-tap/bm-dhcp-tap.py ens3
+# IFACE is read from bm-hook.env; falls back to ens3 if unset
+ExecStart=/usr/bin/python3 /opt/bm-dhcp-tap/bm-dhcp-tap.py $IFACE
 
-# Load NetBox credentials and other env vars
-EnvironmentFile=/opt/bm-dhcp-tap/bm-hook.env
+# Load NetBox credentials and IFACE from env file
+# The leading '-' means systemd will not fail if the file is missing
+EnvironmentFile=-/opt/bm-dhcp-tap/bm-hook.env
 
 # Give the process raw socket access without running as root
 # If you prefer to run as root, replace the three lines below with User=root

@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-IFACE     = sys.argv[1] if len(sys.argv) > 1 else 'ens3'
+IFACE     = (sys.argv[1] if len(sys.argv) > 1 else '') or 'ens3'
 HOOK_PATH = os.environ.get('HOOK_PATH', '/opt/bm-dhcp-tap/dhcp_hook2.sh')
 LOG_FILE  = os.environ.get('LOG_FILE',  '/opt/bm-dhcp-tap/log/dhcp-tap.log')
 
