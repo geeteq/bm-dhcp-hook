@@ -8,14 +8,14 @@
 #   - NetBox API helpers (nb_curl, nb_get, nb_post, nb_patch)
 #   - NetBox operations  (nb_find_device_by_bmc_mac, nb_update_device_state,
 #                         nb_assign_ip, nb_update_bmc_ip, nb_journal)
-#   - BMC OUI filter     (BMC_OUIS array, is_bmc_mac)
+#   - BMC OUI filter     (is_bmc_mac — reads from OUI_FILE)
 #   - FSM transition table + action functions
 #   - fsm_process_bmc_event TRIGGER MAC IP
 #
 # Callers set LOG_FILE before sourcing to get script-specific log paths.
 # All other vars fall back to defaults if not set in the environment.
 #
-# Dependencies: bash 4+, curl, jq
+# Dependencies: bash 4+, curl, jq, nc (netcat for optional syslog)
 # =============================================================================
 
 # Guard against double-sourcing
@@ -23,51 +23,97 @@
 _BMC_FSM_SH=1
 
 # ---------------------------------------------------------------------------
-# Config defaults — override by setting in environment before sourcing
+# Config defaults — override via environment or bm-dhcp-tap.cfg before sourcing
 # ---------------------------------------------------------------------------
 NETBOX_URL="${NETBOX_URL:-http://localhost:8000}"
 NETBOX_TOKEN="${NETBOX_TOKEN:-0123456789abcdef0123456789abcdef01234567}"
 BMC_SUBNET_PREFIX="${BMC_SUBNET_PREFIX:-24}"
-LOG_FILE="${LOG_FILE:-/opt/bm-dhcp-tap/log/bmc.log}"
-# Optional HTTP/HTTPS proxy for NetBox API calls (e.g. http://proxy.corp:3128)
-# Set in /opt/bm-dhcp-tap/bm-hook.env when NetBox is only reachable via proxy.
+LOG_FILE="${LOG_FILE:-/opt/bm-dhcp-tap/logs/dhcp_hook2.log}"
+# Optional HTTP/HTTPS proxy for NetBox API calls
 HTTPS_PROXY="${HTTPS_PROXY:-}"
+# OUI file — one entry per line: xx:xx:xx,Vendor description
+OUI_FILE="${OUI_FILE:-/opt/bm-dhcp-tap/etc/oui.cfg}"
+# Remote syslog — leave SYSLOG_SERVER empty to disable
+SYSLOG_SERVER="${SYSLOG_SERVER:-}"
+SYSLOG_PORT="${SYSLOG_PORT:-514}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
 # ---------------------------------------------------------------------------
-# Logging — always writes to stderr + log file so stdout stays clean
-# for command substitutions ($(...))
+# Logging
+#
+# Format: TIMESTAMP HOSTNAME PID LEVEL message
+# Levels: DEBUG | INFORMATION | WARNING | ERROR
+#
+# - Always writes to stderr (visible on CLI; dhcpd discards it)
+# - Always appends to LOG_FILE with 1 MB rolling rotation
+# - Forwards to remote syslog if SYSLOG_SERVER is set
 # ---------------------------------------------------------------------------
+_LOG_MAX_BYTES=1048576   # 1 MB
+
+_log_rotate() {
+    [[ -f "$LOG_FILE" ]] || return 0
+    local size
+    size=$(stat -c%s "$LOG_FILE" 2>/dev/null || stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
+    if [[ "$size" -ge "$_LOG_MAX_BYTES" ]]; then
+        mv "$LOG_FILE" "${LOG_FILE}.1"
+    fi
+}
+
+_syslog_send() {
+    local level="$1" msg="$2"
+    [[ -n "${SYSLOG_SERVER:-}" ]] || return 0
+    # RFC 3164 severity: DEBUG=7 INFORMATION=6 WARNING=4 ERROR=3
+    local severity
+    case "$level" in
+        DEBUG)       severity=7 ;;
+        INFORMATION) severity=6 ;;
+        WARNING)     severity=4 ;;
+        ERROR)       severity=3 ;;
+        *)           severity=6 ;;
+    esac
+    local priority=$(( (1 * 8) + severity ))   # facility 1 = user-level
+    local ts; ts="$(date '+%b %d %H:%M:%S')"
+    local host; host="$(hostname -s 2>/dev/null || echo localhost)"
+    local tag="bm-dhcp-tap[$$]"
+    printf '<%d>%s %s %s: %s\n' "$priority" "$ts" "$host" "$tag" "$msg" \
+        | nc -u -w1 "$SYSLOG_SERVER" "$SYSLOG_PORT" 2>/dev/null || true
+}
+
 log() {
     local level="$1"; shift
     local ts; ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    printf '%s [%s] %s\n' "$ts" "$level" "$*" | tee -a "$LOG_FILE" >&2
+    local host; host="$(hostname -s 2>/dev/null || echo localhost)"
+    local line
+    printf -v line '%s %s %d %s %s' "$ts" "$host" "$$" "$level" "$*"
+    _log_rotate
+    printf '%s\n' "$line" | tee -a "$LOG_FILE" >&2
+    _syslog_send "$level" "$*"
 }
-log_info()  { log "INFO"  "$@"; }
-log_warn()  { log "WARN"  "$@"; }
-log_error() { log "ERROR" "$@"; }
+
+log_debug() { log "DEBUG"       "$@"; }
+log_info()  { log "INFORMATION" "$@"; }
+log_warn()  { log "WARNING"     "$@"; }
+log_error() { log "ERROR"       "$@"; }
 
 # ---------------------------------------------------------------------------
-# BMC OUI filter
-# Add / remove vendor OUI prefixes (lower-case, colon-separated, 3 octets)
-# ---------------------------------------------------------------------------
-BMC_OUIS=(
-    "a0:36:9f"   # HPE iLO (ProLiant)
-    "d0:67:e5"   # Dell iDRAC
-    "3c:a8:2a"   # Dell iDRAC (newer gen)
-    "14:18:77"   # Supermicro IPMI
-    "18:fb:7b"   # Supermicro IPMI
-    "b4:96:91"   # Lenovo XClarity (XCC)
-    "d0:94:66"   # Cisco CIMC
-)
-
+# BMC OUI filter — reads from OUI_FILE (no hardcoded prefixes)
+#
 # is_bmc_mac LOWER_COLON_MAC — returns 0 if OUI matches, 1 otherwise
+# ---------------------------------------------------------------------------
 is_bmc_mac() {
     local oui="${1:0:8}"
-    for prefix in "${BMC_OUIS[@]}"; do
-        [[ "$oui" == "$prefix" ]] && return 0
-    done
+    if [[ ! -f "$OUI_FILE" ]]; then
+        log_warn "OUI file not found: ${OUI_FILE} — all MACs will be rejected"
+        return 1
+    fi
+    while IFS=, read -r prefix _vendor || [[ -n "$prefix" ]]; do
+        # skip blank lines and comments
+        [[ -z "$prefix" || "${prefix:0:1}" == "#" ]] && continue
+        # normalise entry to lowercase
+        local norm_prefix; norm_prefix="$(printf '%s' "$prefix" | tr '[:upper:]' '[:lower:]')"
+        [[ "$oui" == "$norm_prefix" ]] && return 0
+    done < "$OUI_FILE"
     return 1
 }
 

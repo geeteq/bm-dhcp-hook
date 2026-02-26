@@ -10,17 +10,18 @@ Runs entirely outside the MAAS snap; no external Python packages required.
 Usage:
     python3 bm-dhcp-tap.py [INTERFACE]   # default: ens3
 
-Environment:
-    HOOK_PATH   path to dhcp_hook2.sh   (default: /opt/bm-dhcp-tap/dhcp_hook2.sh)
-    LOG_FILE    log file path            (default: /opt/bm-dhcp-tap/log/dhcp-tap.log)
+Config (loaded from /opt/bm-dhcp-tap/etc/bm-dhcp-tap.cfg, then env overrides):
+    IFACE           Network interface to sniff   (default: ens3)
+    HOOK_PATH       Path to dhcp_hook2.sh        (default: /opt/bm-dhcp-tap/scripts/dhcp_hook2.sh)
+    LOG_FILE        Log file path                (default: /opt/bm-dhcp-tap/logs/bm-dhcp-tap.log)
+    SYSLOG_SERVER   Remote syslog host           (default: empty = disabled)
+    SYSLOG_PORT     Remote syslog UDP port       (default: 514)
 
 Deploy:
-    sudo cp tools/bm-dhcp-tap.py /opt/bm-dhcp-tap/
-    sudo chmod +x /opt/bm-dhcp-tap/bm-dhcp-tap.py
-    sudo cp tools/bm-dhcp-tap.service /etc/systemd/system/
-    sudo systemctl daemon-reload && sudo systemctl enable --now bm-dhcp-tap
+    sudo bash scripts/tools/deploy.sh [--iface IFACE]
 """
 import logging
+import logging.handlers
 import os
 import socket
 import struct
@@ -29,25 +30,98 @@ import sys
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
-# Config
+# Config loader — reads /opt/bm-dhcp-tap/etc/bm-dhcp-tap.cfg
+# Env vars already set take precedence (systemd EnvironmentFile wins).
 # ---------------------------------------------------------------------------
-IFACE     = (sys.argv[1] if len(sys.argv) > 1 else '') or 'ens3'
-HOOK_PATH = os.environ.get('HOOK_PATH', '/opt/bm-dhcp-tap/dhcp_hook2.sh')
-LOG_FILE  = os.environ.get('LOG_FILE',  '/opt/bm-dhcp-tap/log/dhcp-tap.log')
+_CONFIG_FILE = os.environ.get('BM_CONFIG', '/opt/bm-dhcp-tap/etc/bm-dhcp-tap.cfg')
+
+def _load_config(path: str) -> None:
+    """Parse a simple KEY=VALUE config file, setting missing env vars."""
+    if not os.path.isfile(path):
+        return
+    with open(path) as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, _, value = line.partition('=')
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+_load_config(_CONFIG_FILE)
 
 # ---------------------------------------------------------------------------
-# Logging
+# Runtime config
 # ---------------------------------------------------------------------------
+IFACE       = (sys.argv[1] if len(sys.argv) > 1 else '') or os.environ.get('IFACE', 'ens3')
+HOOK_PATH   = os.environ.get('HOOK_PATH',  '/opt/bm-dhcp-tap/scripts/dhcp_hook2.sh')
+LOG_FILE    = os.environ.get('LOG_FILE',   '/opt/bm-dhcp-tap/logs/bm-dhcp-tap.log')
+SYSLOG_SRV  = os.environ.get('SYSLOG_SERVER', '')
+SYSLOG_PORT = int(os.environ.get('SYSLOG_PORT', '514'))
+
+# ---------------------------------------------------------------------------
+# Logging — daemon-style format: TIMESTAMP HOSTNAME PID LEVEL message
+#
+# Handlers:
+#   StreamHandler         — stdout, always on (user can redirect to /dev/null)
+#   RotatingFileHandler   — LOG_FILE, 1 MB rolling window
+#   SysLogHandler         — remote UDP syslog if SYSLOG_SERVER is set
+# ---------------------------------------------------------------------------
+_HOSTNAME = socket.gethostname()
+
+# Rename INFO → INFORMATION to match level naming convention
+logging.addLevelName(logging.INFO,    'INFORMATION')
+logging.addLevelName(logging.WARNING, 'WARNING')
+logging.addLevelName(logging.DEBUG,   'DEBUG')
+logging.addLevelName(logging.ERROR,   'ERROR')
+
+class _CtxFilter(logging.Filter):
+    """Inject hostname into every log record."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.hostname = _HOSTNAME
+        return True
+
+_FMT = '%(asctime)s %(hostname)s %(process)d %(levelname)s %(message)s'
+_DATE_FMT = '%Y-%m-%dT%H:%M:%SZ'
+
+_formatter = logging.Formatter(fmt=_FMT, datefmt=_DATE_FMT)
+_formatter.converter = lambda *_: datetime.now(timezone.utc).timetuple()
+
+_ctx_filter = _CtxFilter()
+
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%dT%H:%M:%SZ',
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(sys.stdout),
-    ],
+
+# stdout handler — always present
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.setFormatter(_formatter)
+_stdout_handler.addFilter(_ctx_filter)
+
+# rotating file handler — 1 MB, keep 1 backup
+_file_handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE, maxBytes=1_048_576, backupCount=1
 )
+_file_handler.setFormatter(_formatter)
+_file_handler.addFilter(_ctx_filter)
+
+_handlers: list[logging.Handler] = [_stdout_handler, _file_handler]
+
+# remote syslog handler — only when SYSLOG_SERVER is configured
+if SYSLOG_SRV:
+    _syslog_handler = logging.handlers.SysLogHandler(
+        address=(SYSLOG_SRV, SYSLOG_PORT),
+        facility=logging.handlers.SysLogHandler.LOG_USER,
+    )
+    _syslog_fmt = logging.Formatter(
+        fmt='%(hostname)s %(process)d %(levelname)s %(message)s',
+    )
+    _syslog_fmt.converter = lambda *_: datetime.now(timezone.utc).timetuple()
+    _syslog_handler.setFormatter(_syslog_fmt)
+    _syslog_handler.addFilter(_ctx_filter)
+    _handlers.append(_syslog_handler)
+
+logging.basicConfig(level=logging.INFO, handlers=_handlers)
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -136,6 +210,8 @@ def parse_dhcp_ack(frame: bytes):
 # ---------------------------------------------------------------------------
 def main() -> None:
     log.info('BM DHCP tap starting  iface=%s  hook=%s', IFACE, HOOK_PATH)
+    if SYSLOG_SRV:
+        log.info('Syslog enabled  server=%s  port=%d', SYSLOG_SRV, SYSLOG_PORT)
 
     if not os.path.isfile(HOOK_PATH):
         log.error('Hook script not found: %s — exiting', HOOK_PATH)

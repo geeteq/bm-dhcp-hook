@@ -2,8 +2,8 @@
 # =============================================================================
 # DHCP Hook — Direct NetBox Integration
 # =============================================================================
-# Called by ISC DHCP server on every lease commit. Filters for BMC MAC OUIs,
-# then updates NetBox directly via the shared FSM library.
+# Called by ISC DHCP server on every lease commit. Filters for BMC MAC OUIs
+# (loaded from OUI_FILE), then updates NetBox directly via the shared FSM lib.
 #
 # For ISC DHCP, add to /etc/dhcp/dhcpd.conf:
 #
@@ -11,7 +11,7 @@
 #       set ClientIP   = binary-to-ascii(10, 8, ".", leased-address);
 #       set ClientMac  = binary-to-ascii(16, 8, ":", substring(hardware, 1, 6));
 #       set ClientHost = pick-first-value(option host-name, "unknown");
-#       execute("/opt/bm-dhcp-tap/dhcp_hook2.sh", ClientIP, ClientMac, ClientHost);
+#       execute("/opt/bm-dhcp-tap/scripts/dhcp_hook2.sh", ClientIP, ClientMac, ClientHost);
 #   }
 #
 # Arguments (or environment variable fallbacks):
@@ -19,15 +19,31 @@
 #   $2 / CLIENT_MAC      Client MAC address (any separator, any case)
 #   $3 / CLIENT_HOSTNAME Client hostname (optional)
 #
-# Environment variables: see lib/bmc-fsm.sh
-#   LOG_FILE defaults to /opt/bm-dhcp-tap/log/dhcp-hook.log
+# Environment variables: see scripts/lib/bmc-fsm.sh
+#   LOG_FILE defaults to /opt/bm-dhcp-tap/logs/dhcp_hook2.log
 # =============================================================================
 
 # Do not use set -e — dhcpd must not see a non-zero exit from this hook
 set -uo pipefail
 
+# ---------------------------------------------------------------------------
+# Load config file (env vars take precedence over config file values)
+# ---------------------------------------------------------------------------
+_CFG="${BM_CONFIG:-/opt/bm-dhcp-tap/etc/bm-dhcp-tap.cfg}"
+if [[ -f "$_CFG" ]]; then
+    while IFS= read -r _line || [[ -n "$_line" ]]; do
+        [[ -z "$_line" || "${_line:0:1}" == "#" ]] && continue
+        [[ "$_line" != *"="* ]] && continue
+        _key="${_line%%=*}"
+        _val="${_line#*=}"
+        # only set if not already in environment
+        [[ -z "${!_key+x}" ]] && export "$_key"="$_val"
+    done < "$_CFG"
+fi
+unset _CFG _line _key _val
+
 # Script-specific log file — set before sourcing the lib
-LOG_FILE="${LOG_FILE:-/opt/bm-dhcp-tap/log/dhcp-hook.log}"
+LOG_FILE="${LOG_FILE:-/opt/bm-dhcp-tap/logs/dhcp_hook2.log}"
 
 # Load shared FSM library (NetBox helpers, OUI filter, state machine)
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,7 +66,7 @@ if [[ -z "$IP_ADDRESS" || -z "$MAC_ADDRESS" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# OUI filter — normalise MAC then check against known BMC vendor prefixes
+# OUI filter — normalise MAC then check against OUI_FILE
 # ---------------------------------------------------------------------------
 MAC_NORM="$(echo "$MAC_ADDRESS" | tr '[:upper:]' '[:lower:]' | tr '-' ':')"
 
