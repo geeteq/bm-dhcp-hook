@@ -7,12 +7,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# IFACE is read from bm-hook.env; falls back to ens3 if unset
-ExecStart=/usr/bin/python3 /opt/bm-dhcp-tap/bm-dhcp-tap.py $IFACE
+# IFACE is read from bm-dhcp-tap.cfg; falls back to ens3 if unset
+ExecStart=/usr/bin/python3 /opt/bm-dhcp-tap/scripts/bm-dhcp-tap.py $IFACE
 
-# Load NetBox credentials and IFACE from env file
-# The leading '-' means systemd will not fail if the file is missing
-EnvironmentFile=-/opt/bm-dhcp-tap/bm-hook.env
+# Load credentials and settings from the main config file.
+# The leading '-' means systemd will not fail if the file is missing.
+EnvironmentFile=-/opt/bm-dhcp-tap/etc/bm-dhcp-tap.cfg
 
 # Give the process raw socket access without running as root
 # If you prefer to run as root, replace the three lines below with User=root
@@ -26,7 +26,7 @@ User=root
 Restart=on-failure
 RestartSec=10
 
-# Log goes to journald as well as /opt/bm-dhcp-tap/log/dhcp-tap.log
+# Log goes to journald as well as /opt/bm-dhcp-tap/logs/bm-dhcp-tap.log
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=bm-dhcp-tap

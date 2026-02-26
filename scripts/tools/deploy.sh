@@ -10,12 +10,13 @@
 #
 # What this script does:
 #   1. Checks prerequisites (root, Ubuntu, python3, curl, jq)
-#   2. Creates /opt/bm-dhcp-tap/{lib,log}/
+#   2. Creates /opt/bm-dhcp-tap/{etc,scripts,scripts/lib,logs,doc}/
 #   3. Installs scripts and sets permissions
-#   4. Creates /opt/bm-dhcp-tap/bm-hook.env if it does not exist
-#      (existing files are NOT overwritten — credentials are preserved)
-#   5. Writes/updates IFACE in bm-hook.env
-#   6. Installs and starts the systemd service
+#   4. Creates /opt/bm-dhcp-tap/etc/bm-dhcp-tap.cfg if it does not exist
+#      (existing file is NOT overwritten — credentials are preserved)
+#   5. Writes/updates IFACE in bm-dhcp-tap.cfg
+#   6. Installs /opt/bm-dhcp-tap/etc/oui.cfg (OUI vendor list)
+#   7. Installs and starts the systemd service
 #
 # Idempotent — safe to re-run after upgrades.
 # =============================================================================
@@ -76,7 +77,7 @@ else
 fi
 
 # Dependency checks
-for dep in python3 curl jq; do
+for dep in python3 curl jq nc; do
     if ! command -v "$dep" &>/dev/null; then
         die "Required dependency not found: ${dep}  (install with: apt-get install -y ${dep})"
     fi
@@ -93,66 +94,82 @@ fi
 # ---------------------------------------------------------------------------
 # 2 — Create directory structure
 # ---------------------------------------------------------------------------
-info "Creating ${INSTALL_DIR}/{lib,log}/"
-mkdir -p "${INSTALL_DIR}/lib"
-mkdir -p "${INSTALL_DIR}/log"
+info "Creating ${INSTALL_DIR}/{etc,scripts,scripts/lib,logs,doc}/"
+mkdir -p "${INSTALL_DIR}/etc"
+mkdir -p "${INSTALL_DIR}/scripts/lib"
+mkdir -p "${INSTALL_DIR}/logs"
+mkdir -p "${INSTALL_DIR}/doc"
 chmod 750 "${INSTALL_DIR}"
-chmod 750 "${INSTALL_DIR}/log"
+chmod 750 "${INSTALL_DIR}/logs"
 
 # ---------------------------------------------------------------------------
 # 3 — Install scripts
 # ---------------------------------------------------------------------------
-info "Installing scripts to ${INSTALL_DIR}/"
+info "Installing scripts to ${INSTALL_DIR}/scripts/"
 
-install -m 755 "${REPO_ROOT}/scripts/dhcp_hook2.sh"        "${INSTALL_DIR}/dhcp_hook2.sh"
-install -m 644 "${REPO_ROOT}/scripts/lib/bmc-fsm.sh"       "${INSTALL_DIR}/lib/bmc-fsm.sh"
-install -m 755 "${REPO_ROOT}/scripts/tools/bm-dhcp-tap.py" "${INSTALL_DIR}/bm-dhcp-tap.py"
+install -m 755 "${REPO_ROOT}/scripts/dhcp_hook2.sh"        "${INSTALL_DIR}/scripts/dhcp_hook2.sh"
+install -m 644 "${REPO_ROOT}/scripts/lib/bmc-fsm.sh"       "${INSTALL_DIR}/scripts/lib/bmc-fsm.sh"
+install -m 755 "${REPO_ROOT}/scripts/tools/bm-dhcp-tap.py" "${INSTALL_DIR}/scripts/bm-dhcp-tap.py"
 
 info "Installed:"
-info "  ${INSTALL_DIR}/dhcp_hook2.sh"
-info "  ${INSTALL_DIR}/lib/bmc-fsm.sh"
-info "  ${INSTALL_DIR}/bm-dhcp-tap.py"
+info "  ${INSTALL_DIR}/scripts/dhcp_hook2.sh"
+info "  ${INSTALL_DIR}/scripts/lib/bmc-fsm.sh"
+info "  ${INSTALL_DIR}/scripts/bm-dhcp-tap.py"
 
 # ---------------------------------------------------------------------------
-# 4 — Create bm-hook.env (if it does not exist)
+# 4 — Install OUI config (always updated to pick up new vendor additions)
 # ---------------------------------------------------------------------------
-ENV_FILE="${INSTALL_DIR}/bm-hook.env"
+info "Installing OUI list to ${INSTALL_DIR}/etc/oui.cfg"
+install -m 644 "${REPO_ROOT}/scripts/tools/oui.cfg" "${INSTALL_DIR}/etc/oui.cfg"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-    info "Creating ${ENV_FILE} (template — fill in NETBOX_URL and NETBOX_TOKEN)"
-    cat > "$ENV_FILE" <<EOF
-# bm-dhcp-tap environment — edit before starting the service
-# Permissions are 640 (root:root) — keep this file private.
+# ---------------------------------------------------------------------------
+# 5 — Create bm-dhcp-tap.cfg (if it does not exist)
+# ---------------------------------------------------------------------------
+CFG_FILE="${INSTALL_DIR}/etc/bm-dhcp-tap.cfg"
 
-# NetBox connection
+if [[ ! -f "$CFG_FILE" ]]; then
+    info "Creating ${CFG_FILE} (template — fill in NETBOX_URL and NETBOX_TOKEN)"
+    cat > "$CFG_FILE" <<EOF
+# bm-dhcp-tap configuration
+# Edit before starting the service. Permissions: 640 (root:root)
+
+# ── NetBox ──────────────────────────────────────────────────────────────────
 NETBOX_URL=https://your-netbox
 NETBOX_TOKEN=your-token-here
 
 # Optional proxy for NetBox API calls (leave empty to connect directly)
 # HTTPS_PROXY=http://proxy.corp.example.com:3128
 
-# Log file (shared by all bm-dhcp-tap scripts)
-LOG_FILE=/opt/bm-dhcp-tap/log/dhcp-hook.log
-
+# ── Network ─────────────────────────────────────────────────────────────────
 # Network interface for DHCP snooping — updated by deploy.sh
 IFACE=${IFACE}
+BMC_SUBNET_PREFIX=24
+
+# ── OUI filter ──────────────────────────────────────────────────────────────
+OUI_FILE=/opt/bm-dhcp-tap/etc/oui.cfg
+
+# ── Syslog (optional) ───────────────────────────────────────────────────────
+# Leave SYSLOG_SERVER empty to disable remote syslog streaming.
+# When set, all log messages are forwarded via UDP (RFC 3164).
+SYSLOG_SERVER=
+SYSLOG_PORT=514
 EOF
-    chmod 640 "$ENV_FILE"
-    warn "IMPORTANT: edit ${ENV_FILE} and set NETBOX_URL + NETBOX_TOKEN before the service can work"
+    chmod 640 "$CFG_FILE"
+    warn "IMPORTANT: edit ${CFG_FILE} and set NETBOX_URL + NETBOX_TOKEN before the service can work"
 else
-    info "${ENV_FILE} already exists — credentials preserved"
+    info "${CFG_FILE} already exists — credentials preserved"
     # Update IFACE in the existing file
-    if grep -q "^IFACE=" "$ENV_FILE"; then
-        sed -i "s|^IFACE=.*|IFACE=${IFACE}|" "$ENV_FILE"
-        info "Updated IFACE=${IFACE} in ${ENV_FILE}"
+    if grep -q "^IFACE=" "$CFG_FILE"; then
+        sed -i "s|^IFACE=.*|IFACE=${IFACE}|" "$CFG_FILE"
+        info "Updated IFACE=${IFACE} in ${CFG_FILE}"
     else
-        echo "IFACE=${IFACE}" >> "$ENV_FILE"
-        info "Appended IFACE=${IFACE} to ${ENV_FILE}"
+        echo "IFACE=${IFACE}" >> "$CFG_FILE"
+        info "Appended IFACE=${IFACE} to ${CFG_FILE}"
     fi
 fi
 
 # ---------------------------------------------------------------------------
-# 5 — Install systemd service
+# 6 — Install systemd service
 # ---------------------------------------------------------------------------
 info "Installing ${SERVICE_FILE}"
 install -m 644 "${REPO_ROOT}/scripts/tools/bm-dhcp-tap.service" "$SERVICE_FILE"
@@ -173,7 +190,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6 — Status
+# 7 — Status
 # ---------------------------------------------------------------------------
 echo ""
 systemctl status "$SERVICE_NAME" --no-pager --lines=10 || true
@@ -181,6 +198,7 @@ systemctl status "$SERVICE_NAME" --no-pager --lines=10 || true
 echo ""
 info "=== Deploy complete ==="
 info "Logs:    journalctl -fu ${SERVICE_NAME}"
-info "Logfile: ${INSTALL_DIR}/log/dhcp-hook.log"
-[[ -f "$ENV_FILE" ]] && grep -q "your-token-here" "$ENV_FILE" && \
-    warn "Remember to set NETBOX_URL and NETBOX_TOKEN in ${ENV_FILE} then: systemctl restart ${SERVICE_NAME}"
+info "Logfile: ${INSTALL_DIR}/logs/bm-dhcp-tap.log"
+info "Logfile: ${INSTALL_DIR}/logs/dhcp_hook2.log"
+[[ -f "$CFG_FILE" ]] && grep -q "your-token-here" "$CFG_FILE" && \
+    warn "Remember to set NETBOX_URL and NETBOX_TOKEN in ${CFG_FILE} then: systemctl restart ${SERVICE_NAME}"

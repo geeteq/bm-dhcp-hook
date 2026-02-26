@@ -1,0 +1,28 @@
+[x] Make it self contained
+    - The normal root directory is /opt/bm-dhcp-tap
+    - /etc has the env files
+    - /scripts has the scripts
+    - /doc has the doc
+    - main config name is /etc/bm-dhcp-tap.cfg in the /opt/bm-dhcp-tap root
+[x] syslog streaming of all logs
+[x] Have a feature where the actions are logged via syslog
+[x] define syslog server port and syslog endpoint variable in config file
+      - if syslog settings are not set dont enable feature
+      - log local to a buffer that is 1 megabyte long rolling window
+      - process when run from command line always outputs stdout and stderr
+      - user can pipe do /dev/null if needed to ignore logs
+[x] almost act as a daemon, identify the syslog message with
+      - timestamp
+      - host process is running on
+      - process id
+      - action level DEBUG|WARNING|INFORMATION
+[x] make device OUI into a simple file that can be parsed
+      - call it /etc/oui.cfg, no headers, just entries
+      - OUI can be added as text with OUI prefix 22:22:22,vendor_name
+      - anything not in the OUI list is ignored
+[x] make sure each process has it's own log output
+      - bm-dhcp-tap.py /logs/bm-dhcp-tap.log
+      - dhcp_hook2.sh /logs/dhcp_hook2.log
+[x] remove device OUI from code and put it in /etc/oui.cfg
+
+
