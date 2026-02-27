@@ -1,0 +1,31 @@
+# Server Provisioning
+
+## Offline
+- Server is ordered
+- Server is in transit
+- Server is received and GRd
+- Factory output file is loaded to NetBox
+- Server is assigned to tenant or baremetal-reserve tenant
+
+## CLLI Placeholder
+- Server is received on-site
+- Server is racked
+- Server is cabled
+- Server is powered on
+
+## Planned
+- Dont know what happens here
+
+## Staged
+- Provisioning runs
+    - Phase 1: Configuration mgt
+    - Phase 2: Deployment
+    - Phase 3: Verification & network discovery
+      - connec to git hub
+    - Phase 4: HW health
+    - Phase 5: TOR enablement
+    - Phase 6: handover -> active
+
+## Active
+    - dont know what happens here
+
